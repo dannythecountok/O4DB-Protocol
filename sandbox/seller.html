@@ -1,0 +1,2325 @@
+<!DOCTYPE html>
+<!--
+    O4DB™ Protocol — v1.1.4
+    Seller Node Portal — Live Feed, Offer Signing, ACK Submission
+
+    Copyright © 2026 Daniel Eduardo Placanica. All Rights Reserved.
+    Safe Creative Registration ID: 2602184604821-4XTVN6
+    Patent Application in Preparation (USPTO)
+    Contact: daniel@o4db.org
+
+    Licensed under O4DB™ Community & Commercial License v1.1.4
+Last-Updated: 2026-02-24T19:00Z
+    See LICENSE file for full terms. Commercial use requires written agreement.
+
+    Cryptographic implementation: Ed25519 (primary) / ECDSA P-256 (fallback)
+    Algorithm detection: runtime via Web Crypto API detectCryptoAlgo()
+    Key storage: session memory only — no persistent key material in localStorage
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>O4DB™ Seller Node — v1.1.4</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:        #0a0c10;
+            --surface:   #111318;
+            --surface2:  #181c24;
+            --border:    #252a35;
+            --accent:    #00d4ff;
+            --accent2:   #7c3aed;
+            --success:   #10b981;
+            --warning:   #f59e0b;
+            --danger:    #ef4444;
+            --text:      #e2e8f0;
+            --muted:     #64748b;
+            --mono:      'Space Mono', monospace;
+            --sans:      'DM Sans', sans-serif;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 14px;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* Scanline overlay for industrial feel */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,212,255,0.015) 2px,
+                rgba(0,212,255,0.015) 4px
+            );
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* ── LAYOUT ── */
+        .shell {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            grid-template-rows: 56px 1fr;
+            min-height: 100vh;
+        }
+
+        /* ── TOPBAR ── */
+        .topbar {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .topbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-mark {
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .brand-name {
+            font-family: var(--mono);
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: var(--text);
+        }
+
+        .brand-version {
+            font-size: 10px;
+            color: var(--muted);
+            font-family: var(--mono);
+        }
+
+        .topbar-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--muted);
+            transition: background 0.3s;
+        }
+
+        .status-dot.active { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-dot.warning { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
+        .status-dot.error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+        /* ── SIDEBAR ── */
+        .sidebar {
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 24px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            overflow-y: auto;
+        }
+
+        .sidebar-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .sidebar-label {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+            padding: 0 8px;
+        }
+
+        .stat-block {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .stat-value {
+            font-family: var(--mono);
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .stat-value.accent { color: var(--accent); }
+        .stat-value.success { color: var(--success); }
+        .stat-value.warning { color: var(--warning); }
+
+        .stat-label {
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .trust-bar-wrap {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .trust-bar-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 11px;
+        }
+
+        .trust-bar-track {
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .trust-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent2), var(--accent));
+            border-radius: 3px;
+            transition: width 0.6s ease;
+        }
+
+        /* ── MAIN CONTENT ── */
+        .main {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            padding: 0 24px;
+            overflow-x: auto;
+        }
+
+        .tab {
+            padding: 14px 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+            transition: color 0.2s, border-color 0.2s;
+            background: none;
+            border-top: none;
+            border-left: none;
+            border-right: none;
+        }
+
+        .tab:hover { color: var(--text); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        .tab-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: none;
+        }
+
+        .tab-content.active { display: block; }
+
+        /* ── CARDS ── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-title::before {
+            content: '';
+            width: 3px;
+            height: 14px;
+            background: var(--accent);
+            border-radius: 2px;
+        }
+
+        /* ── IDENTITY / KEYS ── */
+        .key-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .key-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field-label {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .field-value {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            word-break: break-all;
+            min-height: 48px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .field-value:hover { border-color: var(--accent); }
+        .field-value.empty { color: var(--muted); font-style: italic; font-family: var(--sans); font-size: 12px; }
+
+        /* ── INPUTS ── */
+        input[type="text"],
+        input[type="password"],
+        input[type="number"],
+        textarea,
+        select {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 9px 12px;
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            width: 100%;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            outline: none;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0,212,255,0.1);
+        }
+
+        select option { background: var(--surface2); }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+
+        /* ── BUTTONS ── */
+        .btn {
+            padding: 9px 18px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--sans);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent2), #6d28d9);
+            color: #fff;
+        }
+        .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); }
+
+        .btn-accent {
+            background: var(--accent);
+            color: #0a0c10;
+        }
+        .btn-accent:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--border);
+        }
+        .btn-ghost:hover { color: var(--text); border-color: var(--text); }
+
+        .btn-danger {
+            background: rgba(239,68,68,0.15);
+            color: var(--danger);
+            border: 1px solid rgba(239,68,68,0.3);
+        }
+        .btn-danger:hover { background: rgba(239,68,68,0.25); }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        /* ── VCI FEED ── */
+        .vci-card {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: border-color 0.2s;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .vci-card:hover { border-color: var(--accent2); }
+
+        .vci-card.affinity { border-left: 3px solid var(--accent); }
+        .vci-card.probation { border-left: 3px solid var(--warning); }
+        .vci-card.offered      { border-left: 3px solid var(--success); opacity: 0.7; }
+        .vci-card.ack-pending  { border-left: 3px solid var(--warning); opacity: 0.85; }
+        .vci-card.ack-confirmed {
+            border-left: 3px solid var(--success);
+            background: rgba(16,185,129,0.04);
+        }
+
+        .ack-panel {
+            background: rgba(16,185,129,0.05);
+            border: 1px solid rgba(16,185,129,0.15);
+            border-radius: 8px;
+            padding: 14px;
+            margin-top: 12px;
+        }
+
+        .ack-panel-title {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--success);
+            margin-bottom: 10px;
+        }
+
+        .ack-field {
+            margin-bottom: 10px;
+        }
+
+        .btn-ack {
+            background: linear-gradient(135deg, var(--success), #059669);
+            color: #0d1117;
+            font-weight: 700;
+        }
+        .btn-ack:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .vci-card.priority-card { border-color: rgba(16,185,129,0.3); }
+        .vci-card.insight-card  { opacity: 0.85; }
+
+        .badge-priority {
+            background: rgba(16,185,129,0.12);
+            color: var(--success);
+            border: 1px solid rgba(16,185,129,0.25);
+        }
+
+        .badge-insight {
+            background: rgba(245,158,11,0.1);
+            color: var(--warning);
+            border: 1px solid rgba(245,158,11,0.2);
+        }
+
+        .vci-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .vci-id {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--accent);
+        }
+
+        .vci-mode {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .vci-mode.affinity {
+            background: rgba(0,212,255,0.1);
+            color: var(--accent);
+            border: 1px solid rgba(0,212,255,0.2);
+        }
+
+        .vci-mode.probation {
+            background: rgba(245,158,11,0.1);
+            color: var(--warning);
+            border: 1px solid rgba(245,158,11,0.2);
+        }
+
+        .vci-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .vci-field {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .vci-field-label {
+            font-size: 10px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .vci-field-value {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text);
+        }
+
+        .vci-field-value.highlight {
+            color: var(--accent);
+            font-family: var(--mono);
+        }
+
+        .ttl-bar {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+
+        .ttl-fill {
+            height: 100%;
+            background: var(--success);
+            border-radius: 2px;
+            transition: width 1s linear, background 0.3s;
+        }
+
+        .offer-form {
+            background: rgba(0,212,255,0.03);
+            border: 1px solid rgba(0,212,255,0.1);
+            border-radius: 8px;
+            padding: 14px;
+            margin-top: 12px;
+            display: none;
+        }
+
+        .offer-form.open { display: block; animation: slideIn 0.2s ease; }
+
+        .offer-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        /* ── INVENTORY ── */
+        .inventory-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .inventory-table th {
+            text-align: left;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--muted);
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .inventory-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(37,42,53,0.5);
+            font-size: 13px;
+        }
+
+        .inventory-table tr:hover td { background: var(--surface2); }
+
+        .inventory-table .mono { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .badge-active {
+            background: rgba(16,185,129,0.1);
+            color: var(--success);
+            border: 1px solid rgba(16,185,129,0.2);
+        }
+
+        /* ── LOG ── */
+        .log-entry {
+            display: flex;
+            gap: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(37,42,53,0.5);
+            font-size: 12px;
+        }
+
+        .log-time {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted);
+            white-space: nowrap;
+            min-width: 70px;
+        }
+
+        .log-msg { color: var(--text); }
+        .log-msg.success { color: var(--success); }
+        .log-msg.warning { color: var(--warning); }
+        .log-msg.error   { color: var(--danger); }
+        .log-msg.info    { color: var(--accent); }
+
+        /* ── TOAST ── */
+        .toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 10000;
+        }
+
+        .toast {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+            max-width: 320px;
+            animation: toastIn 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+
+        .toast.success { border-left: 3px solid var(--success); }
+        .toast.error   { border-left: 3px solid var(--danger); }
+        .toast.info    { border-left: 3px solid var(--accent); }
+        .toast.warning { border-left: 3px solid var(--warning); }
+
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateX(20px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        /* ── SETUP WIZARD ── */
+        .wizard-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(10,12,16,0.95);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .wizard-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 40px;
+            width: 480px;
+            max-width: 95vw;
+        }
+
+        .wizard-step { display: none; }
+        .wizard-step.active { display: block; animation: slideIn 0.3s ease; }
+
+        .wizard-title {
+            font-family: var(--mono);
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: var(--accent);
+        }
+
+        .wizard-subtitle {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+
+        .wizard-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 24px;
+        }
+
+        .relay-url-display {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--accent);
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+
+        /* ── CONFIG SECTION ── */
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .divider {
+            height: 1px;
+            background: var(--border);
+            margin: 20px 0;
+        }
+
+        /* ── EMPTY STATE ── */
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--muted);
+        }
+
+        .empty-state-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.4;
+        }
+
+        .empty-state-text {
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        /* ── PULSE ANIMATION FOR POLLING ── */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.4; }
+        }
+
+        .polling-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .polling-indicator.active { color: var(--success); }
+
+        .pulse-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .polling-indicator.active .pulse-dot {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        /* ══════════════════════════════════
+           RESPONSIVE — MOBILE / TABLET
+           ══════════════════════════════════ */
+
+        /* Identity overlay mobile */
+        @media (max-width: 600px) {
+            html, body { overflow-x: hidden; max-width: 100vw; }
+            .id-overlay {
+                align-items: flex-start;
+                overflow-y: auto;
+                overflow-x: hidden;
+            }
+            .id-box {
+                width: 100%;
+                max-width: min(440px, calc(100vw - 32px));
+                min-height: 100vh;
+                border-radius: 0;
+                padding: 40px 20px;
+                border: none;
+                box-sizing: border-box;
+            }
+        }
+
+        /* Portrait tablet/mobile */
+        @media (max-width: 768px) and (orientation: portrait) {
+            .shell {
+                grid-template-columns: 1fr !important;
+                grid-template-rows: 56px auto 1fr !important;
+            }
+            .topbar { grid-column: 1 / -1; }
+            .sidebar {
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+                padding: 16px;
+                overflow-y: visible;
+            }
+            .main {
+                overflow: auto;
+                padding: 0;
+            }
+            .vci-grid { grid-template-columns: 1fr 1fr !important; }
+            .stats-row { grid-template-columns: 1fr 1fr !important; flex-wrap: wrap; }
+            .topbar { padding: 0 16px; }
+        }
+
+        /* Landscape mobile */
+        @media (max-width: 900px) and (orientation: landscape) {
+            .shell {
+                grid-template-columns: 260px 1fr !important;
+                grid-template-rows: 50px 1fr !important;
+                height: 100vh;
+            }
+            .topbar { grid-column: 1 / -1; height: 50px; }
+            .sidebar {
+                border-right: 1px solid var(--border);
+                border-bottom: none;
+                overflow-y: auto;
+                padding: 12px 14px;
+            }
+            .main {
+                overflow-y: auto;
+                padding: 0;
+            }
+        }
+
+        @media (max-width: 480px) {
+            body { font-size: 13px; }
+            .topbar { padding: 0 12px; }
+            .sidebar { padding: 12px; }
+            .vci-grid { grid-template-columns: 1fr !important; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── SETUP WIZARD ── -->
+<div class="wizard-overlay" id="wizard">
+    <div class="wizard-box">
+
+        <!-- Step 1: Identity -->
+        <div class="wizard-step active" id="step-1">
+            <div class="wizard-title">// SELLER NODE SETUP</div>
+            <div class="wizard-subtitle">
+                Configure your cryptographic identity. Your private key never leaves this browser.
+            </div>
+
+            <div class="input-group">
+                <label class="field-label">Seller ID</label>
+                <input type="text" id="w-seller-id" placeholder="e.g. SELLER-AR-001" />
+            </div>
+
+            <div class="input-group">
+                <label class="field-label">Relay Server URL</label>
+                <input type="text" id="w-relay-url" value="https://api.o4db.org" />
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="field-label" style="margin-bottom:10px">Cryptographic Keys</div>
+
+            <div class="btn-row" style="margin-bottom:12px">
+                <button class="btn btn-primary" onclick="wizardGenerateKeys()">
+                    ⚡ Generate New Keypair
+                </button>
+                <button class="btn btn-ghost" onclick="toggleImport()">
+                    Import Existing
+                </button>
+            </div>
+
+            <div id="import-section" style="display:none; margin-bottom:12px">
+                <div class="input-group">
+                    <label class="field-label">Private Key (hex)</label>
+                    <input type="password" id="w-import-key" placeholder="Paste your 64-char hex private key" />
+                </div>
+                <button class="btn btn-ghost" onclick="wizardImportKey()" style="width:100%">
+                    Import & Verify
+                </button>
+            </div>
+
+            <div id="w-pubkey-display" class="field-value empty">
+                Public key will appear here after generation
+            </div>
+
+            <div class="wizard-footer">
+                <button class="btn btn-accent" onclick="wizardStep2()" id="btn-next-1" disabled>
+                    Next: Inventory →
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: Inventory -->
+        <div class="wizard-step" id="step-2">
+            <div class="wizard-title">// INVENTORY SETUP</div>
+            <div class="wizard-subtitle">
+                Add product identifiers you carry — or skip for now and add them from the
+                <strong style="color:var(--accent)">Inventory tab</strong> after launch.
+                The relay uses this for Inventory Affinity scoring.
+            </div>
+
+            <div class="input-group">
+                <label class="field-label">Delivery Areas (comma-separated)</label>
+                <input type="text" id="w-delivery-areas" placeholder="AR:CABA, AR, UY" value="AR:CABA" />
+            </div>
+
+            <div class="input-group">
+                <label class="field-label">Minimum Commitment Level (0–4)</label>
+                <select id="w-min-commitment">
+                    <option value="0">Level 0 — No financial commitment</option>
+                    <option value="1" selected>Level 1 — Intent declared</option>
+                    <option value="2">Level 2 — Financial hold required</option>
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label class="field-label">Products (optional — format: EAN:7798369933420, one per line)</label>
+                <textarea id="w-inventory" rows="4"
+                    placeholder="Optional — add products later from the Inventory tab"></textarea>
+                <div style="font-size:11px; color:var(--muted); margin-top:4px">
+                    Categories are derived automatically from your product list.
+                </div>
+            </div>
+
+            <div class="wizard-footer">
+                <button class="btn btn-ghost" onclick="showStep(1)">← Back</button>
+                <button class="btn btn-accent" onclick="wizardRegister()">
+                    Register Node →
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 3: Done -->
+        <div class="wizard-step" id="step-3">
+            <div class="wizard-title">// NODE REGISTERED</div>
+            <div class="wizard-subtitle">
+                Your seller node is registered with the relay. Keep your private key safe —
+                it is only stored in this browser session.
+            </div>
+
+            <div id="w-registration-result" class="relay-url-display">—</div>
+
+            <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); border-radius:8px; padding:14px; margin-top:12px;">
+                <div style="font-size:11px; font-weight:700; color:var(--danger); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.08em;">
+                    ⚠ Save Your Private Key
+                </div>
+                <div id="w-privkey-export" class="field-value" style="cursor:pointer; font-size:10px" onclick="copyPrivKey()">
+                    Click to copy
+                </div>
+                <div style="font-size:11px; color:var(--muted); margin-top:8px;">
+                    This key will not be shown again. Store it securely offline.
+                </div>
+            </div>
+
+            <div class="wizard-footer">
+                <button class="btn btn-accent" onclick="launchNode()">
+                    Launch Node →
+                </button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- ── MAIN SHELL ── -->
+<div class="shell">
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+        <div class="topbar-brand">
+            <div class="brand-mark">O4</div>
+            <div>
+                <div class="brand-name">O4DB™ SELLER NODE</div>
+                <div class="brand-version">Protocol v1.1.4 — Community Edition</div>
+            </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:20px">
+            <div class="polling-indicator" id="polling-indicator">
+                <div class="pulse-dot"></div>
+                <span id="polling-text">Idle</span>
+            </div>
+            <div class="topbar-status">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Not configured</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <div class="sidebar-section">
+            <div class="sidebar-label">Node Identity</div>
+            <div class="stat-block">
+                <div class="stat-value accent" id="sb-seller-id" style="font-size:13px">—</div>
+                <div class="stat-label">Seller ID</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-value" id="sb-pubkey" style="font-size:9px; word-break:break-all; font-family:var(--mono); color:var(--muted)">—</div>
+                <div class="stat-label">Public Key</div>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-label">Network Stats</div>
+            <div class="stat-block">
+                <div class="stat-value accent" id="sb-trust">—</div>
+                <div class="stat-label">Trust Score</div>
+            </div>
+            <div class="trust-bar-wrap">
+                <div class="trust-bar-label">
+                    <span style="font-size:11px; color:var(--muted)">Network Score</span>
+                    <span style="font-family:var(--mono); font-size:11px" id="sb-ns">—</span>
+                </div>
+                <div class="trust-bar-track">
+                    <div class="trust-bar-fill" id="sb-ns-bar" style="width:0%"></div>
+                </div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-value success" id="sb-txns">0</div>
+                <div class="stat-label">Transactions</div>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-label">Session</div>
+            <div class="stat-block">
+                <div class="stat-value warning" id="sb-vcis">0</div>
+                <div class="stat-label">VCIs received</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-value success" id="sb-offers">0</div>
+                <div class="stat-label">Offers submitted</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-value success" id="sb-acks">0</div>
+                <div class="stat-label">ACKs confirmed</div>
+            </div>
+        </div>
+
+        <div style="margin-top:auto">
+            <button class="btn btn-ghost" onclick="resetNode()" style="width:100%; font-size:12px">
+                ⚙ Reconfigure Node
+            </button>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main">
+        <nav class="tab-bar">
+            <button class="tab active" onclick="switchTab('vci-feed')">Live Feed</button>
+            <button class="tab" onclick="switchTab('inventory')">Inventory</button>
+            <button class="tab" onclick="switchTab('config')">Settings</button>
+            <button class="tab" onclick="switchTab('activity-log')">Activity Log</button>
+        </nav>
+
+        <!-- TAB: VCI FEED -->
+        <div class="tab-content active" id="tab-vci-feed">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+                <div style="font-size:13px; color:var(--muted)">
+                    <span id="feed-summary">Listening for intents from relay.</span>
+                </div>
+                <div style="display:flex; gap:8px">
+                    <button class="btn btn-ghost" onclick="pollNow()" style="font-size:12px">
+                        ↻ Poll Now
+                    </button>
+                    <button class="btn btn-ghost" id="btn-toggle-polling" onclick="togglePolling()" style="font-size:12px">
+                        Start Polling
+                    </button>
+                </div>
+            </div>
+            <div id="vci-list">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📡</div>
+                    <div class="empty-state-text">
+                        No active VCIs yet.<br><br>
+                        <strong style="color:var(--text)">First step:</strong>
+                        go to the <strong style="color:var(--accent)">Inventory tab</strong>
+                        and add the products you carry.<br>
+                        Then start polling — matching intents will appear here.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: INVENTORY -->
+        <div class="tab-content" id="tab-inventory">
+            <div class="card">
+                <div class="card-title">Add Product</div>
+                <div class="config-grid">
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Identifier (EAN/UPC/SKU)</label>
+                        <input type="text" id="inv-id" placeholder="e.g. EAN:7798369933420" />
+                    </div>
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Description</label>
+                        <input type="text" id="inv-desc" placeholder="iPhone 15 Pro 256GB" />
+                    </div>
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Base Price (USD)</label>
+                        <input type="number" id="inv-price" placeholder="950.00" step="0.01" />
+                    </div>
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Stock</label>
+                        <input type="number" id="inv-stock" placeholder="10" />
+                    </div>
+                </div>
+                <div style="margin-top:12px">
+                    <button class="btn btn-primary" onclick="addInventoryItem()">Add to Inventory</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Current Inventory</div>
+                <table class="inventory-table" id="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>Identifier</th>
+                            <th>Description</th>
+                            <th>Base Price</th>
+                            <th>Stock</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventory-tbody">
+                        <tr>
+                            <td colspan="6" style="text-align:center; color:var(--muted); padding:24px">
+                                No inventory items yet
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: SETTINGS -->
+        <div class="tab-content" id="tab-config">
+            <div class="card">
+                <div class="card-title">Relay Connection</div>
+                <div class="config-grid">
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Relay URL</label>
+                        <input type="text" id="cfg-relay-url" />
+                    </div>
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Poll Interval (seconds)</label>
+                        <input type="number" id="cfg-poll-interval" value="10" min="5" max="60" />
+                    </div>
+                </div>
+                <div style="margin-top:12px">
+                    <button class="btn btn-primary" onclick="saveConfig()">Save Settings</button>
+                    <button class="btn btn-ghost" onclick="testRelay()" style="margin-left:8px">Test Connection</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Default Offer Parameters</div>
+                <div class="config-grid">
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Default Delivery Days</label>
+                        <input type="number" id="cfg-delivery-days" value="3" min="1" max="30" />
+                    </div>
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Default Warranty (months)</label>
+                        <input type="number" id="cfg-warranty" value="12" min="0" max="36" />
+                    </div>
+                    <div class="input-group" style="margin:0">
+                        <label class="field-label">Default Margin (%)</label>
+                        <input type="number" id="cfg-margin" value="5" min="0" max="50" />
+                    </div>
+                </div>
+                <div style="margin-top:12px">
+                    <button class="btn btn-primary" onclick="saveOfferDefaults()">Save Defaults</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Key Management</div>
+                <div style="margin-bottom:12px">
+                    <label class="field-label" style="margin-bottom:6px; display:block">Current Public Key</label>
+                    <div class="field-value" id="cfg-pubkey" onclick="copyPubKey()">—</div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-ghost" onclick="copyPubKey()">Copy Public Key</button>
+                    <button class="btn btn-danger" onclick="clearKeys()">Clear Session Keys</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: ACTIVITY LOG -->
+        <div class="tab-content" id="tab-activity-log">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+                <div style="font-size:13px; color:var(--muted)">All protocol events for this session</div>
+                <button class="btn btn-ghost" onclick="clearLog()" style="font-size:12px">Clear Log</button>
+            </div>
+            <div id="activity-log"></div>
+        </div>
+
+    </main>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toasts"></div>
+
+
+<script>
+// ════════════════════════════════════════════════════════════
+// O4DB™ SELLER NODE — v1.1.4
+// All cryptographic operations use Web Crypto API (native browser)
+// Private keys never transmitted — signing happens locally
+// ════════════════════════════════════════════════════════════
+
+const VERSION = '1.1.2';
+
+// ── STATE ────────────────────────────────────────────────────
+const state = {
+    sellerId:    null,
+    relayUrl:    'https://api.o4db.org',
+    privateKey:  null,   // CryptoKey object — never serialized to network
+    publicKeyHex: null,
+    publicKeyB64: null,
+    inventory:   [],
+    vcis:        {},     // vci_id → {vci, state: 'pending'|'offered'|'expired'}
+    pollingTimer: null,
+    pollInterval: 10,
+    stats: { vciReceived: 0, offersSubmitted: 0 },
+    config: {
+        deliveryDays: 3,
+        warrantyMonths: 12,
+        marginPct: 5,
+    }
+};
+
+// ── CRYPTOGRAPHY ─────────────────────────────────────────────
+
+// ── CRYPTO ALGORITHM DETECTION ───────────────────────────────
+// Detects Ed25519 browser support at runtime.
+// Falls back to ECDSA P-256 for Safari < 17, Firefox < 130.
+// The relay's verify_signature() auto-detects by public key length.
+
+let ALGO = null;  // set by detectCryptoAlgo() before any key operation
+
+async function detectCryptoAlgo() {
+    try {
+        // Try generating an Ed25519 key — throws on unsupported browsers
+        await window.crypto.subtle.generateKey(
+            { name: 'Ed25519' }, false, ['sign', 'verify']
+        );
+        ALGO = 'Ed25519';
+    } catch (e) {
+        // Fallback: ECDSA P-256 — universally supported
+        ALGO = 'P-256';
+    }
+    console.log('[O4DB] Crypto algorithm:', ALGO);
+}
+
+function getKeyGenParams() {
+    return ALGO === 'Ed25519'
+        ? { name: 'Ed25519' }
+        : { name: 'ECDSA', namedCurve: 'P-256' };
+}
+
+function getSignParams() {
+    return ALGO === 'Ed25519'
+        ? 'Ed25519'
+        : { name: 'ECDSA', hash: 'SHA-256' };
+}
+
+function getVerifyParams() {
+    return ALGO === 'Ed25519'
+        ? 'Ed25519'
+        : { name: 'ECDSA', hash: 'SHA-256' };
+}
+
+function getKeyUsages() {
+    return ['sign', 'verify'];
+}
+
+// Core crypto functions (use ALGO set by detectCryptoAlgo()) — matches relay's verify_ed25519() in main.py
+// Signatures are base64-encoded for relay compatibility
+// Browser support: Chrome 113+, Firefox 130+, Safari 17+
+
+async function generateKeyPair() {
+    if (!ALGO) await detectCryptoAlgo();
+    return await window.crypto.subtle.generateKey(
+        getKeyGenParams(),
+        true,   // extractable — needed for export/import
+        getKeyUsages()
+    );
+}
+
+async function exportPublicKeyRaw(cryptoKey) {
+    const raw = await window.crypto.subtle.exportKey('raw', cryptoKey);
+    return raw;
+}
+
+async function exportPrivateKeyHex(cryptoKey) {
+    const pkcs8 = await window.crypto.subtle.exportKey('pkcs8', cryptoKey);  // Ed25519 pkcs8
+    return buf2hex(pkcs8);
+}
+
+async function importPrivateKeyFromHex(hex) {
+    const pkcs8 = hex2buf(hex);
+    if (!ALGO) await detectCryptoAlgo();
+    return await window.crypto.subtle.importKey(
+        'pkcs8', pkcs8,
+        getKeyGenParams(),
+        true,
+        ['sign']
+    );
+}
+
+async function signPayload(payload) {
+    if (!state.privateKey) throw new Error('No private key loaded');
+    const encoded = new TextEncoder().encode(
+        typeof payload === 'string' ? payload : JSON.stringify(payload)
+    );
+    const sig = await window.crypto.subtle.sign(
+        getSignParams(),
+        state.privateKey,
+        encoded
+    );
+    return buf2b64(sig);
+}
+
+// Recursively sort all keys — matches Python json.dumps(sort_keys=True, separators=(',',':'))
+function sortedStringify(obj) {
+    if (Array.isArray(obj)) return '[' + obj.map(sortedStringify).join(',') + ']';
+    if (obj !== null && typeof obj === 'object') {
+        const keys = Object.keys(obj).sort();
+        return '{' + keys.map(k => JSON.stringify(k) + ':' + sortedStringify(obj[k])).join(',') + '}';
+    }
+    return JSON.stringify(obj);
+}
+
+// ── HELPERS ──────────────────────────────────────────────────
+function buf2hex(buf) {
+    return Array.from(new Uint8Array(buf))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hex2buf(hex) {
+    const arr = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2)
+        arr[i / 2] = parseInt(hex.substr(i, 2), 16);
+    return arr.buffer;
+}
+
+function buf2b64(buf) {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)));
+}
+
+function b642hex(b64) {
+    return buf2hex(Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer);
+}
+
+function generateVCIId() {
+    return 'VCI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 8).toUpperCase();
+}
+
+function now() { return Date.now() / 1000; }
+
+function timeAgo(ts) {
+    const d = Math.floor(Date.now() / 1000 - ts);
+    if (d < 60)  return `${d}s ago`;
+    if (d < 3600) return `${Math.floor(d/60)}m ago`;
+    return `${Math.floor(d/3600)}h ago`;
+}
+
+// ── WIZARD ───────────────────────────────────────────────────
+
+function showStep(n) {
+    document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+    document.getElementById(`step-${n}`).classList.add('active');
+}
+
+function toggleImport() {
+    const s = document.getElementById('import-section');
+    s.style.display = s.style.display === 'none' ? 'block' : 'none';
+}
+
+async function wizardGenerateKeys() {
+    try {
+        await detectCryptoAlgo();
+        const kp = await generateKeyPair();
+        const rawPub = await exportPublicKeyRaw(kp.publicKey);
+        const privHex = await exportPrivateKeyHex(kp.privateKey);
+
+        state.privateKey   = kp.privateKey;
+        state.publicKeyHex = buf2hex(rawPub);
+        state.publicKeyB64 = buf2b64(rawPub);
+        state._privKeyHex  = privHex;  // temp for export in step 3
+
+        document.getElementById('w-pubkey-display').textContent = state.publicKeyHex;
+        document.getElementById('w-pubkey-display').classList.remove('empty');
+        document.getElementById('btn-next-1').disabled = false;
+
+        toast('Keypair generated — save your private key in Step 3', 'success');
+    } catch (e) {
+        toast('Key generation failed: ' + e.message, 'error');
+    }
+}
+
+async function wizardImportKey() {
+    const hex = document.getElementById('w-import-key').value.trim();
+    if (!hex) { toast('Paste your private key hex first', 'warning'); return; }
+    try {
+        // Force Ed25519 — imported keys are always Ed25519
+        ALGO = 'Ed25519';
+        const pkcs8Bytes = hex2buf(hex);
+        const privKey = await window.crypto.subtle.importKey(
+            'pkcs8', pkcs8Bytes,
+            { name: 'Ed25519' }, true, ['sign']
+        );
+
+        // Export as JWK to extract the public key bytes (field 'x')
+        const jwk = await window.crypto.subtle.exportKey('jwk', privKey);
+        // jwk.x is the base64url-encoded public key
+        const pubB64Url = jwk.x;
+        // Convert base64url → base64 standard
+        const pubB64 = pubB64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const padding = (4 - pubB64.length % 4) % 4;
+        const pubB64Padded = pubB64 + '='.repeat(padding);
+
+        state.privateKey   = privKey;
+        state.publicKeyB64 = pubB64Padded;
+        state.publicKeyHex = buf2hex(Uint8Array.from(atob(pubB64Padded), c => c.charCodeAt(0)));
+        state._privKeyHex  = hex;
+
+        toast('Key imported and public key derived successfully.', 'success');
+        document.getElementById('w-pubkey-display').textContent = 'Public Key: ' + state.publicKeyHex;
+        document.getElementById('w-pubkey-display').classList.remove('empty');
+        document.getElementById('btn-next-1').disabled = false;
+    } catch (e) {
+        toast('Invalid key: ' + e.message, 'error');
+    }
+}
+
+function wizardStep2() {
+    const sid = document.getElementById('w-seller-id').value.trim();
+    const url = document.getElementById('w-relay-url').value.trim();
+    if (!sid) { toast('Enter your Seller ID', 'warning'); return; }
+    if (!url) { toast('Enter Relay URL', 'warning'); return; }
+    if (!state.privateKey) { toast('Generate keys first', 'warning'); return; }
+
+    state.sellerId = sid;
+    state.relayUrl = url;
+    showStep(2);
+}
+
+async function wizardRegister() {
+    const sellerId = state.sellerId;
+    const deliveryAreas = document.getElementById('w-delivery-areas').value
+        .split(',').map(s => s.trim()).filter(Boolean);
+    const minCommitment = parseInt(document.getElementById('w-min-commitment').value);
+    const inventoryRaw = document.getElementById('w-inventory').value
+        .split('\n').map(s => s.trim()).filter(Boolean);
+
+    // Derive categories from inventory prefixes (EAN:xxx → EAN), default to general
+    const prefixes = [...new Set(inventoryRaw
+        .map(id => id.includes(':') ? id.split(':')[0] : 'EAN')
+    )];
+    const categories = prefixes.length ? prefixes : ['EAN'];
+
+    if (!state.publicKeyB64) { toast('Generate keypair first', 'warning'); return; }
+
+    const ts = Date.now() / 1000;
+    const payload = {
+        seller_id:      sellerId,
+        categories,
+        delivery_areas: deliveryAreas,
+        min_commitment: minCommitment,
+        sign_pubkey:    state.publicKeyB64,
+        webhook_url:    null,
+        inventory_ids:  inventoryRaw,
+        timestamp:      ts,
+    };
+
+    // Sign exactly the fields the relay verifies, sorted categories/delivery_areas
+    // Must match relay's validate_seller_signature exactly
+    const signPayloadObj = {
+        seller_id:      sellerId,
+        categories:     [...categories].sort(),
+        delivery_areas: [...deliveryAreas].sort(),
+        min_commitment: minCommitment,
+        sign_pubkey:    payload.sign_pubkey,
+        timestamp:      ts,
+    };
+    const canonical = sortedStringify(signPayloadObj);
+    payload.signature = await signPayload(canonical);
+
+    try {
+        const resp = await fetch(`${state.relayUrl}/api/v1/seller/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+
+        const data = await resp.json();
+
+        if (!resp.ok) {
+            // If already registered, continue anyway
+            if (data.detail && data.detail.includes('already registered')) {
+                log('Seller already registered — continuing', 'warning');
+            } else {
+                throw new Error(data.detail || 'Registration failed');
+            }
+        }
+
+        // Save inventory to state
+        // Normalize inventory IDs: bare numbers → EAN:XXXX
+        state.inventory = inventoryRaw.map(raw => {
+            const id = /^[A-Z]+:/.test(raw) ? raw : 'EAN:' + raw;
+            return { id, description: '', basePrice: 0, stock: 99 };
+        });
+
+        document.getElementById('w-registration-result').textContent =
+            JSON.stringify({ seller_id: sellerId, status: 'registered', mode: data.mode || 'SANDBOX_NEW' }, null, 2);
+
+        document.getElementById('w-privkey-export').textContent = state._privKeyHex || '(imported key)';
+
+        showStep(3);
+        log(`Registered as ${sellerId} on ${state.relayUrl}`, 'success');
+
+    } catch (e) {
+        toast('Registration error: ' + e.message, 'error');
+        log('Registration failed: ' + e.message, 'error');
+    }
+}
+
+function copyPrivKey() {
+    const key = state._privKeyHex;
+    if (!key) return;
+    navigator.clipboard.writeText(key).then(() => toast('Private key copied', 'info'));
+}
+
+function launchNode() {
+    document.getElementById('wizard').style.display = 'none';
+    updateSidebar();
+    updateInventoryTable();
+    document.getElementById('cfg-relay-url').value = state.relayUrl;
+    document.getElementById('cfg-pubkey').textContent = state.publicKeyHex || '—';
+
+    setStatus('active', `Connected as ${state.sellerId}`);
+    log(`Node launched — Seller: ${state.sellerId}`, 'success');
+    log(`Relay: ${state.relayUrl}`, 'info');
+
+    // Fetch initial trust score
+    fetchTrustScore();
+}
+
+// ── POLLING ──────────────────────────────────────────────────
+
+function togglePolling() {
+    if (state.pollingTimer) {
+        stopPolling();
+    } else {
+        startPolling();
+    }
+}
+
+function startPolling() {
+    if (!state.sellerId) { toast('Configure node first', 'warning'); return; }
+
+    state.pollingTimer = setInterval(pollNow, state.pollInterval * 1000);
+    pollNow();
+
+    document.getElementById('btn-toggle-polling').textContent = 'Stop Polling';
+    setPollingActive(true);
+    log('Polling started', 'info');
+}
+
+function stopPolling() {
+    clearInterval(state.pollingTimer);
+    state.pollingTimer = null;
+    document.getElementById('btn-toggle-polling').textContent = 'Start Polling';
+    setPollingActive(false);
+    log('Polling stopped', 'info');
+}
+
+async function pollNow() {
+    if (!state.sellerId) return;
+    try {
+        const resp = await fetch(`${state.relayUrl}/api/v1/seller/${state.sellerId}/intents`);
+        if (!resp.ok) throw new Error('Relay unreachable');
+        const data = await resp.json();
+
+        const intents = data.intents || [];
+        let newCount = 0;
+        for (const vci of intents) {
+            if (!state.vcis[vci.vci_id]) {
+                receiveVCI(vci);
+                newCount++;
+            }
+        }
+        setStatus('active', `Polling — Last: ${new Date().toLocaleTimeString()} — ${intents.length} active`);
+        if (newCount > 0) log(`${newCount} new intent(s) received`, 'success');
+
+    } catch (e) {
+        setStatus('error', 'Relay unreachable');
+        log('Poll failed: ' + e.message, 'error');
+    }
+}
+
+// ── RECEIVE VCI (called by webhook or simulation) ─────────────
+//
+// Visual Gravity: every VCI reaching this node is stored and rendered.
+// The seller decides what to ignore — the software does not hide demand.
+//
+// gravity: 'priority' → exact inventory match   (Active Matches section)
+//          'insight'  → no match, category/zone eligible (Market Insights)
+
+function receiveVCI(vciData) {
+    const vciId   = vciData.vci_id;
+    const idValue = vciData.demand_spec?.split(':')[1];
+
+    // Compute Visual Gravity
+    const exactMatch = state.inventory.some(item => item.id === idValue);
+    const gravity    = exactMatch ? 'priority' : 'insight';
+
+    // Store VCI — never filtered out
+    state.vcis[vciId] = {
+        vci:        vciData,
+        state:      'pending',
+        receivedAt: now(),
+        gravity,
+    };
+
+    state.stats.vciReceived++;
+    document.getElementById('sb-vcis').textContent = state.stats.vciReceived;
+
+    renderVCIFeed();
+
+    if (gravity === 'priority') {
+        log(`[MATCH] VCI ${vciId} — ${vciData.demand_spec} — exact inventory hit`, 'success');
+        toast('Direct match: ' + vciData.demand_spec, 'success');
+    } else {
+        log(`[INSIGHT] VCI ${vciId} — ${vciData.demand_spec} — market opportunity`, 'info');
+        toast('Market insight: ' + vciData.demand_spec, 'info');
+    }
+}
+
+// ── OFFER FLOW ────────────────────────────────────────────────
+
+function toggleOfferForm(vciId) {
+    const form = document.getElementById(`offer-form-${vciId}`);
+    form.classList.toggle('open');
+}
+
+async function submitOffer(vciId) {
+    const entry = state.vcis[vciId];
+    if (!entry) return;
+
+    const price    = parseFloat(document.getElementById(`offer-price-${vciId}`).value);
+    const delivery = parseInt(document.getElementById(`offer-delivery-${vciId}`).value);
+    const warranty = parseInt(document.getElementById(`offer-warranty-${vciId}`).value);
+
+    if (isNaN(price) || price <= 0) {
+        toast('Enter a valid price', 'warning'); return;
+    }
+    if (!state.privateKey) {
+        toast('No signing key loaded', 'error'); return;
+    }
+
+    // Build canonical offer payload (must match relay validation exactly)
+    const offerPayload = {
+        seller_id:  state.sellerId,
+        unit_price: price,
+        attributes: {
+            delivery_days:    delivery,
+            warranty_months:  warranty,
+        },
+        vci_id: vciId,
+    };
+
+    // Sort keys recursively — matches Python json.dumps(sort_keys=True, separators=(",",":"))
+    const canonical = sortedStringify(offerPayload);
+
+    try {
+        const signature = await signPayload(canonical);
+
+        const body = {
+            seller_id:  state.sellerId,
+            unit_price: price,
+            attributes: offerPayload.attributes,
+            signature,
+        };
+
+        const resp = await fetch(
+            `${state.relayUrl}/api/v1/vci/${vciId}/offer`,
+            {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+            }
+        );
+
+        const data = await resp.json();
+
+        if (!resp.ok) throw new Error(data.detail || 'Offer rejected');
+
+        entry.state = 'offered';
+        entry.offerId = data.offer_id;
+        state.stats.offersSubmitted++;
+
+        document.getElementById('sb-offers').textContent = state.stats.offersSubmitted;
+        renderVCIFeed();
+
+        log(`Offer submitted: ${vciId} @ $${price} | ID: ${data.offer_id}`, 'success');
+        toast(`Offer accepted by relay — ID: ${data.offer_id}`, 'success');
+
+    } catch (e) {
+        toast('Offer failed: ' + e.message, 'error');
+        log('Offer failed: ' + e.message, 'error');
+    }
+}
+
+// ── RENDER VCI FEED ───────────────────────────────────────────
+
+function buildVCICard(entry) {
+    const v        = entry.vci;
+    const elapsed  = now() - entry.receivedAt;
+    const ttlPct   = Math.max(0, Math.min(100, (1 - elapsed / (v.ttl || 1800)) * 100));
+    const ttlColor = ttlPct > 50 ? 'var(--success)' : ttlPct > 20 ? 'var(--warning)' : 'var(--danger)';
+    const mode     = v.affinity_mode || 'probation';
+    const idValue  = (v.demand_spec || '').split(':')[1] || '—';
+    const inv      = state.inventory.find(i => i.id === idValue);
+    const isPriority = entry.gravity === 'priority';
+
+    return `
+    <div class="vci-card ${mode} ${entry.state === 'offered' ? 'offered' : ''} ${isPriority ? 'priority-card' : 'insight-card'}">
+        <div class="vci-header">
+            <div>
+                <div class="vci-id">${v.vci_id}</div>
+                <div style="font-size:12px; color:var(--muted); margin-top:2px">
+                    ${timeAgo(entry.receivedAt)}
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center">
+                ${entry.state === 'offered' ? '<span class="badge badge-active">✓ OFFERED</span>' : ''}
+                ${isPriority
+                    ? '<span class="badge badge-priority">🎯 IN INVENTORY</span>'
+                    : '<span class="badge badge-insight">📊 OPPORTUNITY</span>'
+                }
+                <span class="vci-mode ${mode}">${mode}</span>
+            </div>
+        </div>
+
+        <div class="vci-grid">
+            <div class="vci-field">
+                <div class="vci-field-label">Product</div>
+                <div class="vci-field-value highlight">${v.demand_spec || '—'}</div>
+            </div>
+            <div class="vci-field">
+                <div class="vci-field-label">Quantity</div>
+                <div class="vci-field-value">${v.quantity || 1}</div>
+            </div>
+            <div class="vci-field">
+                <div class="vci-field-label">Currency</div>
+                <div class="vci-field-value">${v.currency || 'USD'}</div>
+            </div>
+            <div class="vci-field">
+                <div class="vci-field-label">Delivery Area</div>
+                <div class="vci-field-value">${v.delivery_area || '—'}</div>
+            </div>
+            <div class="vci-field">
+                <div class="vci-field-label">Commitment</div>
+                <div class="vci-field-value">Level ${v.commitment_level ?? '—'}</div>
+            </div>
+            <div class="vci-field">
+                <div class="vci-field-label">${isPriority ? 'Your Price' : 'Your Inventory'}</div>
+                <div class="vci-field-value highlight">
+                    ${inv ? '$' + inv.basePrice : '<span style="color:var(--muted)">Not stocked</span>'}
+                </div>
+            </div>
+        </div>
+
+        <div class="ttl-bar">
+            <div class="ttl-fill" style="width:${ttlPct}%; background:${ttlColor}"></div>
+        </div>
+        <div style="font-size:10px; color:var(--muted); margin-bottom:10px">
+            TTL: ${Math.max(0, Math.floor((v.ttl || 1800) - elapsed))}s remaining
+        </div>
+
+        ${entry.state !== 'offered' ? `
+        <div style="display:flex; gap:8px">
+            <button class="btn btn-primary" onclick="toggleOfferForm('${v.vci_id}')" style="font-size:12px">
+                ${isPriority ? 'Make Offer' : 'Respond as Opportunity'}
+            </button>
+            <button class="btn btn-ghost" onclick="ignoreVCI('${v.vci_id}')" style="font-size:12px">
+                Skip
+            </button>
+        </div>
+
+        <div class="offer-form" id="offer-form-${v.vci_id}">
+            <div style="font-size:11px; font-weight:700; color:var(--accent); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.08em">
+                Build & Sign Offer
+            </div>
+            ${!isPriority ? `
+            <div style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.2); border-radius:6px; padding:10px; margin-bottom:12px; font-size:12px; color:var(--warning)">
+                ⚡ Opportunity mode — this product is not in your current inventory.
+                You can still offer if you can source it. Your offer will enter as Probation Mode
+                and help build your Inventory Affinity for this product.
+            </div>` : ''}
+            <div class="offer-grid">
+                <div class="input-group" style="margin:0">
+                    <label class="field-label">Your Price (${v.currency || 'USD'})</label>
+                    <input type="number" id="offer-price-${v.vci_id}"
+                        value="${inv ? inv.basePrice : ''}"
+                        placeholder="0.00" step="0.01" />
+                </div>
+                <div class="input-group" style="margin:0">
+                    <label class="field-label">Delivery Days</label>
+                    <input type="number" id="offer-delivery-${v.vci_id}"
+                        value="${state.config.deliveryDays}" min="1" max="30" />
+                </div>
+                <div class="input-group" style="margin:0">
+                    <label class="field-label">Warranty (months)</label>
+                    <input type="number" id="offer-warranty-${v.vci_id}"
+                        value="${state.config.warrantyMonths}" min="0" max="36" />
+                </div>
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">
+                ⚠ This offer will be cryptographically signed and is binding.
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-accent" onclick="submitOffer('${v.vci_id}')" style="font-size:12px">
+                    Sign & Submit Offer
+                </button>
+                <button class="btn btn-ghost" onclick="toggleOfferForm('${v.vci_id}')" style="font-size:12px">
+                    Cancel
+                </button>
+            </div>
+        </div>
+        ` : `
+        <div style="font-size:12px; color:var(--success); margin-top:8px; margin-bottom:10px">
+            ✓ Offer submitted — Offer ID: ${entry.offerId || '—'}
+        </div>
+
+        ${entry.state === 'offered' ? `
+        <!-- ACK PANEL — visible when buyer settles and relay moves VCI to SETTLED_PENDING -->
+        <div class="ack-panel">
+            <div class="ack-panel-title">⚡ Settlement Received — ACK Required</div>
+            <div style="font-size:12px; color:var(--muted); margin-bottom:12px; line-height:1.6">
+                The buyer selected your offer. Send a cryptographic ACK to confirm
+                acceptance and complete the O4DB™ protocol. This closes the VCI
+                and builds your Inventory Affinity score.
+            </div>
+            <div class="ack-field">
+                <label class="field-label" style="display:block; margin-bottom:5px">Privacy Mode</label>
+                <select id="ack-privacy-${v.vci_id}" style="background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:8px 10px; color:var(--text); font-family:var(--sans); font-size:12px; width:100%">
+                    <option value="private">private — buyer identity not disclosed</option>
+                    <option value="pseudonymous">pseudonymous — alias only</option>
+                </select>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-ack" onclick="submitACK('${v.vci_id}')">
+                    🔐 Sign & Send ACK
+                </button>
+            </div>
+        </div>
+        ` : ''}
+
+        ${entry.state === 'ack-confirmed' ? `
+        <div style="background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.2);
+                    border-radius:8px; padding:14px; margin-top:10px">
+            <div style="font-size:12px; font-weight:700; color:var(--success); margin-bottom:6px">
+                ✅ Protocol Complete
+            </div>
+            <div style="font-size:11px; color:var(--muted); font-family:var(--mono); word-break:break-all">
+                Fingerprint: ${entry.fingerprint || '—'}
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-top:6px">
+                Settlement confirmed. Inventory Affinity updated.
+            </div>
+        </div>
+        ` : ''}
+        `}
+    </div>`;
+}
+
+function renderVCIFeed() {
+    const container = document.getElementById('vci-list');
+    const entries   = Object.values(state.vcis);
+
+    if (!entries.length) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">📡</div>
+                <div class="empty-state-text">
+                    No active VCIs yet.<br><br>
+                    <strong style="color:var(--text)">First step:</strong>
+                    go to the <strong style="color:\'var(--accent)\'">Inventory tab</strong>
+                    and add the products you carry.<br>
+                    Then start polling — matching intents will appear here.
+                </div>
+            </div>`;
+        document.getElementById('feed-summary').textContent = 'Listening for intents from relay.';
+        return;
+    }
+
+    const priority = entries.filter(e => e.gravity === 'priority').sort((a,b) => b.receivedAt - a.receivedAt);
+    const insight  = entries.filter(e => e.gravity === 'insight').sort((a,b) => b.receivedAt - a.receivedAt);
+
+    // Update feed summary
+    document.getElementById('feed-summary').textContent =
+        `${priority.length} direct match${priority.length !== 1 ? 'es' : ''} · ${insight.length} market insight${insight.length !== 1 ? 's' : ''}`;
+
+    let html = '';
+
+    // ── ACTIVE MATCHES ────────────────────────────────────────
+    if (priority.length) {
+        html += `
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+            <div style="font-size:11px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:var(--success)">
+                🎯 Active Matches
+            </div>
+            <div style="flex:1; height:1px; background:rgba(16,185,129,0.2)"></div>
+            <div style="font-size:11px; color:var(--muted)">${priority.length} VCI${priority.length !== 1 ? 's' : ''}</div>
+        </div>`;
+        html += priority.map(e => buildVCICard(e)).join('');
+    }
+
+    // ── MARKET INSIGHTS ───────────────────────────────────────
+    if (insight.length) {
+        const insightId = 'insights-section';
+        html += `
+        <div style="display:flex; align-items:center; gap:10px; margin:20px 0 12px">
+            <div style="font-size:11px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:var(--warning)">
+                📊 Market Insights
+            </div>
+            <div style="flex:1; height:1px; background:rgba(245,158,11,0.2)"></div>
+            <div style="font-size:11px; color:var(--muted)">${insight.length} opportunit${insight.length !== 1 ? 'ies' : 'y'} · not in inventory</div>
+            <button onclick="toggleInsights()" class="btn btn-ghost" style="font-size:11px; padding:3px 10px" id="btn-toggle-insights">
+                Collapse
+            </button>
+        </div>
+        <div id="${insightId}">
+            <div style="background:rgba(245,158,11,0.05); border:1px solid rgba(245,158,11,0.1); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6">
+                These VCIs match your category and zone but not your current stock.
+                Respond to build Inventory Affinity, pivot to source the product, or use them
+                as market demand signals to update your inventory.
+            </div>
+            ${insight.map(e => buildVCICard(e)).join('')}
+        </div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+function toggleInsights() {
+    const section = document.getElementById('insights-section');
+    const btn     = document.getElementById('btn-toggle-insights');
+    if (!section) return;
+    const collapsed = section.style.display === 'none';
+    section.style.display = collapsed ? 'block' : 'none';
+    btn.textContent = collapsed ? 'Collapse' : 'Expand';
+}
+
+// ── ACK SUBMISSION ────────────────────────────────────────────
+// Completes the O4DB™ protocol circle from the seller side.
+//
+// Canonical ACK payload (must match relay's validate_ack canonical):
+//   { privacy_commitment, privacy_mode_ref, settlement_token_id,
+//     timestamp, vci_reference }  — sorted keys
+//
+// After ACK:
+//   - Relay moves VCI state → CONFIRMED
+//   - Settlement Fingerprint stored in relay DB
+//   - Seller's inventory_ids updated (Affinity building)
+//   - SANDBOX_NEW sellers graduate to ACTIVE at threshold
+
+async function submitACK(vciId) {
+    const entry = state.vcis[vciId];
+    if (!entry) return;
+    if (!state.privateKey) {
+        toast('No signing key loaded', 'error'); return;
+    }
+
+    const privacyMode = document.getElementById(`ack-privacy-${vciId}`)?.value || 'private';
+    const ts          = now();
+
+    // Build canonical ACK payload — field names and values must match relay exactly
+    const ackPayload = {
+        vci_reference:       vciId,
+        settlement_token_id: entry.offerId || vciId,   // relay-issued offer token
+        timestamp:           ts,
+        privacy_commitment:  state.publicKeyB64 || state.publicKeyHex || 'NO_KEY',
+        privacy_mode_ref:    privacyMode,
+    };
+
+    // Sign with sort_keys=True order (matches relay's json.dumps(sort_keys=True))
+    const canonical  = JSON.stringify(ackPayload, Object.keys(ackPayload).sort());
+    const signature  = await signPayload(canonical);
+
+    const body = {
+        seller_id:           state.sellerId,
+        privacy_mode:        privacyMode,
+        seller_sign_pub:     state.publicKeyB64 || '',
+        ack_signature:       signature,
+        privacy_commitment:  ackPayload.privacy_commitment,
+        privacy_mode_ref:    privacyMode,
+        vci_reference:       vciId,
+        settlement_token_id: ackPayload.settlement_token_id,
+        timestamp:           ts,
+    };
+
+    try {
+        const resp = await fetch(
+            `${state.relayUrl}/api/v1/vci/${vciId}/ack`,
+            {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+            }
+        );
+
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'ACK rejected');
+
+        // Protocol complete — update entry state
+        entry.state       = 'ack-confirmed';
+        entry.fingerprint = data.fingerprint || null;
+
+        renderVCIFeed();
+
+        // Update ACK counter
+        const ackCount = Object.values(state.vcis).filter(e => e.state === 'ack-confirmed').length;
+        document.getElementById('sb-acks').textContent = ackCount;
+
+        log(`ACK confirmed — VCI: ${vciId} | Fingerprint: ${(data.fingerprint || '').substr(0, 16)}...`, 'success');
+        toast('Protocol complete — ACK accepted by relay ✅', 'success');
+
+        // Update sidebar trust score
+        fetchTrustScore();
+
+    } catch (e) {
+        toast('ACK failed: ' + e.message, 'error');
+        log('ACK failed: ' + e.message, 'error');
+    }
+}
+
+
+function ignoreVCI(vciId) {
+    delete state.vcis[vciId];
+    renderVCIFeed();
+    log(`VCI ${vciId} ignored`, 'info');
+}
+
+// ── INVENTORY ─────────────────────────────────────────────────
+
+function addInventoryItem() {
+    const id    = document.getElementById('inv-id').value.trim();
+    const desc  = document.getElementById('inv-desc').value.trim();
+    const price = parseFloat(document.getElementById('inv-price').value);
+    const stock = parseInt(document.getElementById('inv-stock').value);
+
+    if (!id) { toast('Enter product identifier', 'warning'); return; }
+    // Normalize: bare numbers → EAN:XXXX
+    const normalizedId = /^[A-Z]+:/.test(id) ? id : 'EAN:' + id;
+    if (state.inventory.some(i => i.id === normalizedId)) {
+        toast('Item already in inventory', 'warning'); return;
+    }
+
+    state.inventory.push({ id: normalizedId, description: desc, basePrice: price || 0, stock: stock || 0 });
+    updateInventoryTable();
+
+    document.getElementById('inv-id').value    = '';
+    document.getElementById('inv-desc').value  = '';
+    document.getElementById('inv-price').value = '';
+    document.getElementById('inv-stock').value = '';
+
+    log(`Inventory: added ${id} — ${desc}`, 'success');
+    toast(`Added ${id}`, 'success');
+}
+
+function removeInventoryItem(id) {
+    state.inventory = state.inventory.filter(i => i.id !== id);
+    updateInventoryTable();
+    log(`Inventory: removed ${id}`, 'info');
+}
+
+function updateInventoryTable() {
+    const tbody = document.getElementById('inventory-tbody');
+    if (!state.inventory.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--muted); padding:24px">No inventory items yet</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = state.inventory.map(item => `
+        <tr>
+            <td class="mono">${item.id}</td>
+            <td>${item.description || '—'}</td>
+            <td style="font-family:var(--mono)">$${item.basePrice.toFixed(2)}</td>
+            <td>${item.stock}</td>
+            <td><span class="badge badge-active">Active</span></td>
+            <td>
+                <button class="btn btn-danger" onclick="removeInventoryItem('${item.id}')"
+                    style="font-size:11px; padding:4px 10px">Remove</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// ── TRUST SCORE ───────────────────────────────────────────────
+
+async function fetchTrustScore() {
+    if (!state.sellerId) return;
+    try {
+        const resp = await fetch(`${state.relayUrl}/api/v1/trust/${state.sellerId}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        document.getElementById('sb-trust').textContent = data.trust_score?.toFixed(4) ?? '—';
+        document.getElementById('sb-ns').textContent    = data.network_score?.toFixed(4) ?? '—';
+        document.getElementById('sb-ns-bar').style.width = ((data.network_score || 0) * 100) + '%';
+        document.getElementById('sb-txns').textContent  = data.transactions ?? 0;
+    } catch (e) {
+        // Relay not reachable — non-critical
+    }
+}
+
+// ── CONFIG ────────────────────────────────────────────────────
+
+function saveConfig() {
+    state.relayUrl    = document.getElementById('cfg-relay-url').value.trim();
+    state.pollInterval = parseInt(document.getElementById('cfg-poll-interval').value);
+    toast('Settings saved', 'success');
+    log('Config updated', 'info');
+    if (state.pollingTimer) {
+        stopPolling();
+        startPolling();
+    }
+}
+
+function saveOfferDefaults() {
+    state.config.deliveryDays    = parseInt(document.getElementById('cfg-delivery-days').value);
+    state.config.warrantyMonths  = parseInt(document.getElementById('cfg-warranty').value);
+    state.config.marginPct       = parseInt(document.getElementById('cfg-margin').value);
+    toast('Offer defaults saved', 'success');
+}
+
+async function testRelay() {
+    try {
+        const resp = await fetch(`${state.relayUrl}/health`);
+        const data = await resp.json();
+        toast(`Relay OK — ${data.registered_sellers} sellers, ${data.active_vcis} active VCIs`, 'success');
+        log(`Relay health: ${JSON.stringify(data)}`, 'info');
+    } catch (e) {
+        toast('Relay unreachable: ' + e.message, 'error');
+    }
+}
+
+function copyPubKey() {
+    if (!state.publicKeyHex) return;
+    navigator.clipboard.writeText(state.publicKeyHex)
+        .then(() => toast('Public key copied', 'info'));
+}
+
+function clearKeys() {
+    if (!confirm('Clear session keys? You will need your private key to reconnect.')) return;
+    state.privateKey   = null;
+    state.publicKeyHex = null;
+    state.publicKeyB64 = null;
+    toast('Session keys cleared', 'warning');
+    log('Keys cleared from session', 'warning');
+}
+
+function resetNode() {
+    if (!confirm('Reconfigure this node? Current session will end.')) return;
+    location.reload();
+}
+
+// ── UI HELPERS ────────────────────────────────────────────────
+
+function switchTab(id) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(`tab-${id}`).classList.add('active');
+    event.target.classList.add('active');
+}
+
+function setStatus(type, text) {
+    const dot  = document.getElementById('status-dot');
+    const span = document.getElementById('status-text');
+    dot.className  = `status-dot ${type}`;
+    span.textContent = text;
+}
+
+function setPollingActive(active) {
+    const ind  = document.getElementById('polling-indicator');
+    const text = document.getElementById('polling-text');
+    if (active) {
+        ind.classList.add('active');
+        text.textContent = `Polling every ${state.pollInterval}s`;
+    } else {
+        ind.classList.remove('active');
+        text.textContent = 'Idle';
+    }
+}
+
+function updateSidebar() {
+    document.getElementById('sb-seller-id').textContent = state.sellerId || '—';
+    document.getElementById('sb-pubkey').textContent    = state.publicKeyHex
+        ? state.publicKeyHex.substr(0, 32) + '...'
+        : '—';
+}
+
+function log(msg, type = 'info') {
+    const container = document.getElementById('activity-log');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    const t = new Date().toLocaleTimeString();
+    entry.innerHTML = `
+        <span class="log-time">${t}</span>
+        <span class="log-msg ${type}">${msg}</span>
+    `;
+    container.insertBefore(entry, container.firstChild);
+    if (container.children.length > 200) container.removeChild(container.lastChild);
+}
+
+function clearLog() {
+    document.getElementById('activity-log').innerHTML = '';
+}
+
+function toast(msg, type = 'info') {
+    const container = document.getElementById('toasts');
+    const t = document.createElement('div');
+    t.className = `toast ${type}`;
+    t.innerHTML = `<span>${msg}</span>`;
+    container.appendChild(t);
+    setTimeout(() => t.remove(), 4000);
+}
+
+// ── DEMO: simulate receiving a VCI (for testing without relay) ─
+function demoVCI() {
+    receiveVCI({
+        vci_id:           'VCI-' + Date.now(),
+        demand_spec:      'EAN:7891234567890',
+        quantity:         1,
+        price_token:      'HPKE_ENCRYPTED_TOKEN_PLACEHOLDER',
+        currency:         'USD',
+        ttl:              1800,
+        commitment_level: 2,
+        delivery_area:    'AR:CABA',
+        privacy_mode:     'private',
+        buyer_pubkey:     'BUYER_PUBKEY_PLACEHOLDER',
+        affinity_mode:    'affinity',
+        offer_endpoint:   '/api/v1/vci/demo/offer',
+    });
+}
+
+// Expose for testing
+window.demoVCI = demoVCI;
+
+// Demo: simulate an insight VCI (product not in inventory)
+function demoInsightVCI() {
+    receiveVCI({
+        vci_id:           'VCI-INSIGHT-' + Date.now(),
+        demand_spec:      'EAN:9999999999999',
+        quantity:         2,
+        price_token:      'HPKE_ENCRYPTED_TOKEN_PLACEHOLDER',
+        currency:         'USD',
+        ttl:              1800,
+        commitment_level: 1,
+        delivery_area:    'AR:CABA',
+        privacy_mode:     'private',
+        buyer_pubkey:     'BUYER_PUBKEY_PLACEHOLDER',
+        affinity_mode:    'probation',
+        offer_endpoint:   '/api/v1/vci/demo-insight/offer',
+    });
+}
+window.demoInsightVCI = demoInsightVCI;
+window.receiveVCI = receiveVCI;
+
+// Start TTL refresh — skip if any offer form is open
+setInterval(() => {
+    const anyOpen = document.querySelector('.offer-form.open');
+    if (!anyOpen) renderVCIFeed();
+}, 5000);
+
+// Fetch trust score periodically
+setInterval(fetchTrustScore, 30000);
+</script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9d4bcf50ee4b2329',t:'MTc3MjIzODU4OQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
