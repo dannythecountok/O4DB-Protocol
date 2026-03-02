@@ -2086,23 +2086,30 @@ creating a support burden for the protocol author.
 
 ## Government Procurement Compatibility
 
-O4DB™ v1.1.5 implements a **Sobre Cerrado Digital** (Digital Sealed Bid) model
-natively compatible with public procurement transparency requirements.
+Public procurement law in most jurisdictions requires two things that traditional digital platforms cannot provide simultaneously: **pre-award confidentiality** (bids must not be visible before the award) and **post-award transparency** (the outcome must be publicly auditable).
 
-| Phase | Visibility | Mechanism |
-|-------|-----------|-----------|
-| VCI Active (bidding open) | Nothing revealed | Buyer identity, max price, and destination are cryptographically concealed |
-| ARA Execution | Nothing revealed | Ranking runs locally on buyer device — relay never sees max price |
-| Settlement Pending | Nothing revealed | Winner notified privately — other sellers see no result |
-| **Confirmed** | **Full disclosure** | Price, winner identity, demand identifier, and timestamp become public |
+O4DB™ solves this at the protocol level through the **Digital Sealed Bid** mechanism — not as a policy layer, but as a cryptographic architectural constraint.
+
+### How it works
+
+| Phase | What is visible | Mechanism |
+|-------|----------------|-----------|
+| Bidding open (VCI Active) | Nothing | Buyer identity, max price, and destination cryptographically concealed |
+| Ranking (ARA Execution) | Nothing | Ranking runs exclusively on buyer device — relay never sees max price |
+| Winner notified (Settlement Pending) | Nothing | Winner receives private notification — no other party sees result |
+| **Award confirmed (CONFIRMED)** | **Full public record** | Price, winner identity, demand identifier, and timestamp disclosed and signed |
+
+Pre-award confidentiality is enforced by architecture: the disclosure endpoint returns `HTTP 403` for any transaction not yet in `CONFIRMED` state. Partial disclosure is technically impossible — the sealed bid stays sealed until fully executed.
 
 ### Compliance Reference
 
 | Framework | Requirement | O4DB Mechanism |
 |-----------|-------------|----------------|
 | EU Directive 2014/24/EU | Pre-award confidentiality + post-award publication | State-gated disclosure endpoint |
-| Argentine Ley 13.064 | Sobre cerrado + apertura pública | Settlement Fingerprint public after CONFIRMED |
-| General procurement law | Irrefutable award record | Signed Audit Log (Ed25519 + SHA-256) |
+| U.S. FAR (Federal Acquisition Regulation) | Sealed bidding procedures (FAR Part 14) | Settlement Fingerprint — irrefutable post-award record |
+| General procurement law | Auditable award record | Signed disclosure: Ed25519 + SHA-256, verifiable by any party |
+
+> The protocol is jurisdiction-agnostic. Any procurement framework that requires sealed bids and post-award publication is structurally compatible with O4DB™ by design.
 
 ### Disclosure Endpoint
 
