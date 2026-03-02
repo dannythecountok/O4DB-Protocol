@@ -1,0 +1,56 @@
+# O4DB™ Protocol — Reference Deployment
+# Version: v1.1.5
+# 
+# Usage:
+#   docker-compose up -d
+#
+# The relay exposes a clean REST API on localhost:8080.
+# All cryptographic operations (Ed25519, HPKE, ARA) are handled internally.
+# Your ERP or middleware only needs to make standard HTTP calls.
+#
+# For ERP integration, see README.md — "ERP-Ready Interface" section.
+# For Proxy Node (legacy system) deployment, see "PROXY_NODE Profile" section.
+
+version: "3.9"
+
+services:
+  relay:
+    image: python:3.11-slim
+    container_name: o4db-relay
+    working_dir: /app
+    volumes:
+      - ./relay:/app
+      - o4db-data:/app/data
+    ports:
+      - "8080:8080"
+    environment:
+      - O4DB_DB_PATH=/app/data/o4db.db
+      - BES_ENABLED=false
+      - PORT=8080
+    command: >
+      sh -c "pip install fastapi uvicorn httpx cryptography pynacl --quiet &&
+             uvicorn main:app --host 0.0.0.0 --port 8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  o4db-data:
+    driver: local
+
+# ── ERP INTEGRATION QUICK START ───────────────────────────────
+#
+# Once running, your ERP integration is three endpoints:
+#
+#   POST http://localhost:8080/api/v1/vci          — emit demand
+#   GET  http://localhost:8080/api/v1/vci/{id}     — check status
+#   POST http://localhost:8080/api/v1/vci/{id}/settle — confirm winner
+#
+# All cryptographic complexity is inside the container.
+# Your ERP sends plain JSON. The relay handles Ed25519 + HPKE internally.
+#
+# For Proxy Node (legacy/COBOL systems): 
+#   Set PROXY_MODE=true to enable plain-text input → signed output.
