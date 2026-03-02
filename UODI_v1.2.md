@@ -1,4 +1,13 @@
-# O4DB™ Protocol — Sovereign Agental Commerce Specification v1.1.5
+# O4DB™ Protocol — Sovereign Agentic Commerce Specification v1.1.5
+
+[![Version](https://img.shields.io/badge/version-1.1.5-blue.svg)](https://github.com/danielplacanica/O4DB-Protocol)
+[![Patent Pending](https://img.shields.io/badge/Patent-Pending%20US%2063%2F993%2C946-orange.svg)](https://www.uspto.gov)
+[![UODI](https://img.shields.io/badge/UODI-Patent%20Pending%20US%2063%2F993%2C355-orange.svg)](https://www.uspto.gov)
+[![License](https://img.shields.io/badge/License-O4DB%20Community%20v1.1.5-green.svg)](LICENSE)
+[![Safe Creative](https://img.shields.io/badge/Safe%20Creative-2603014734558--2D52RP-lightgrey.svg)](https://www.safecreative.org)
+[![Protocol](https://img.shields.io/badge/Protocol-Agentic%20Commerce-purple.svg)](https://github.com/danielplacanica/O4DB-Protocol)
+
+
 
 > **Copyright © 2026 Daniel Eduardo Placanica. All Rights Reserved.**  
 > Safe Creative Registration ID: 2602184604821-4XTVN6  
